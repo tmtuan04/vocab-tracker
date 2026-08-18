@@ -9,6 +9,7 @@ export type MessageType =
   | { type: 'CHECK_WORD'; payload: { word: string } }
   | { type: 'CHECK_WORD_RESULT'; payload: Vocabulary | null }
   | { type: 'OPEN_SIDEPANEL'; payload?: { vocabularyId?: string } }
+  | { type: 'OPEN_SIDEPANEL_FOR_NEW'; payload: SelectionPayload }
   | { type: 'VOCAB_UPDATED' };
 
 export type ToastPayload = {

@@ -2,12 +2,12 @@ import { getSelectionContext } from '@/services/sentence';
 import type { MessageType, ToastPayload } from '@/services/messages';
 import type { SelectionPayload } from '@/types/vocabulary';
 
-const TOAST_ID = 'vocab-tracker-toast';
 const BUBBLE_ID = 'vocab-tracker-bubble';
+const TOAST_ID = 'vocab-tracker-toast';
 const BUBBLE_SIZE = 36;
 const BUBBLE_GAP = 8;
 
-let saving = false;
+let busy = false;
 /** Snapshot taken when bubble is shown — selection is often cleared on click. */
 let pendingSelection: SelectionPayload | null = null;
 
@@ -29,7 +29,6 @@ chrome.runtime.onMessage.addListener((message: MessageType, _sender, sendRespons
 
 document.addEventListener('mouseup', (e) => {
   if (isEventOnBubble(e.target)) return;
-  // Defer so native selection is finalized after mouseup
   window.setTimeout(() => syncBubbleFromSelection(), 10);
 });
 
@@ -40,7 +39,7 @@ document.addEventListener(
       hideBubble();
       return;
     }
-    if (e.shiftKey || e.key.startsWith('Arrow')) {
+    if (e.shiftKey || e.key?.startsWith('Arrow')) {
       window.setTimeout(() => syncBubbleFromSelection(), 10);
     }
   },
@@ -51,7 +50,6 @@ document.addEventListener(
   'mousedown',
   (e) => {
     if (isEventOnBubble(e.target)) {
-      // Prevent browser from collapsing the text selection
       e.preventDefault();
       return;
     }
@@ -60,13 +58,7 @@ document.addEventListener(
   true,
 );
 
-document.addEventListener(
-  'scroll',
-  () => {
-    hideBubble();
-  },
-  true,
-);
+document.addEventListener('scroll', () => hideBubble(), true);
 
 function isEventOnBubble(target: EventTarget | null): boolean {
   const bubble = document.getElementById(BUBBLE_ID);
@@ -74,7 +66,7 @@ function isEventOnBubble(target: EventTarget | null): boolean {
 }
 
 function syncBubbleFromSelection(): void {
-  if (saving) return;
+  if (busy) return;
 
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
@@ -105,8 +97,8 @@ function showBubble(rect: DOMRect): void {
     bubble = document.createElement('button');
     bubble.id = BUBBLE_ID;
     bubble.type = 'button';
-    bubble.title = 'Save to My Vocabulary';
-    bubble.setAttribute('aria-label', 'Save to My Vocabulary');
+    bubble.title = 'Thêm vào từ vựng';
+    bubble.setAttribute('aria-label', 'Thêm vào từ vựng');
     bubble.style.cssText = [
       'position:fixed',
       'z-index:2147483646',
@@ -146,11 +138,11 @@ function showBubble(rect: DOMRect): void {
     img.draggable = false;
     bubble.appendChild(img);
 
-    // Use pointerup so we act before selection fully collapses away
+    // Click bubble → mở side panel để nhập nghĩa
     bubble.addEventListener('pointerup', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      void saveFromBubble();
+      void openSidePanelForNew();
     });
     bubble.addEventListener('click', (e) => {
       e.preventDefault();
@@ -165,9 +157,7 @@ function showBubble(rect: DOMRect): void {
     window.innerWidth - BUBBLE_SIZE - 8,
   );
   let top = rect.top - BUBBLE_SIZE - BUBBLE_GAP;
-  if (top < 8) {
-    top = rect.bottom + BUBBLE_GAP;
-  }
+  if (top < 8) top = rect.bottom + BUBBLE_GAP;
   top = Math.min(top, window.innerHeight - BUBBLE_SIZE - 8);
 
   bubble.style.left = `${left}px`;
@@ -176,18 +166,40 @@ function showBubble(rect: DOMRect): void {
 }
 
 function hideBubble(): void {
-  // Keep snapshot while a save is in flight
-  if (!saving) {
-    pendingSelection = null;
-  }
+  if (!busy) pendingSelection = null;
   const bubble = document.getElementById(BUBBLE_ID);
   if (bubble) bubble.style.display = 'none';
 }
 
-async function saveFromBubble(): Promise<void> {
-  if (saving) return;
+/**
+ * Kiểm tra extension context còn hợp lệ không.
+ * Trả về false khi extension vừa được reload/update.
+ */
+function isContextValid(): boolean {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
+    return false;
+  }
+}
 
-  // Prefer live selection; fall back to snapshot captured when bubble appeared
+/**
+ * Gửi context của từ đang chọn lên background để mở Side Panel với form nhập nghĩa.
+ */
+async function openSidePanelForNew(): Promise<void> {
+  if (busy) return;
+
+  // Kiểm tra extension context trước khi gọi chrome API
+  if (!isContextValid()) {
+    showToast({
+      kind: 'error',
+      title: 'Extension đã được cập nhật',
+      message: 'Vui lòng tải lại trang (F5) để tiếp tục.',
+    });
+    hideBubble();
+    return;
+  }
+
   const context = getSelectionContext() ?? pendingSelection;
   if (!context) {
     showToast({
@@ -196,31 +208,41 @@ async function saveFromBubble(): Promise<void> {
       message: 'Hãy bôi đen một từ rồi thử lại.',
     });
     pendingSelection = null;
-    const bubbleEl = document.getElementById(BUBBLE_ID);
-    if (bubbleEl) bubbleEl.style.display = 'none';
+    hideBubble();
     return;
   }
 
-  saving = true;
+  busy = true;
   const bubble = document.getElementById(BUBBLE_ID) as HTMLButtonElement | null;
   if (bubble) {
     bubble.disabled = true;
-    bubble.style.opacity = '0.7';
+    bubble.style.opacity = '0.6';
   }
 
   try {
     await chrome.runtime.sendMessage({
-      type: 'SAVE_SELECTION',
+      type: 'OPEN_SIDEPANEL_FOR_NEW',
       payload: context,
     } satisfies MessageType);
   } catch (err) {
+    // err có thể là Error, DOMException, string, hoặc object tùy trình duyệt
+    const msg = String(
+      (err as { message?: string })?.message ?? err ?? '',
+    );
+    const isInvalidated =
+      msg.includes('invalidated') ||
+      msg.includes('Extension context') ||
+      !isContextValid();
+
     showToast({
       kind: 'error',
-      title: 'Lỗi',
-      message: err instanceof Error ? err.message : 'Không thể lưu từ',
+      title: isInvalidated ? 'Extension đã được cập nhật' : 'Lỗi',
+      message: isInvalidated
+        ? 'Vui lòng tải lại trang (F5) để tiếp tục sử dụng.'
+        : msg || 'Không thể mở side panel',
     });
   } finally {
-    saving = false;
+    busy = false;
     pendingSelection = null;
     if (bubble) {
       bubble.disabled = false;
@@ -229,6 +251,7 @@ async function saveFromBubble(): Promise<void> {
     }
   }
 }
+
 
 function showToast(payload: ToastPayload): void {
   document.getElementById(TOAST_ID)?.remove();
@@ -267,6 +290,5 @@ function showToast(payload: ToastPayload): void {
 
   el.append(title, msg);
   (document.body ?? document.documentElement).appendChild(el);
-
   window.setTimeout(() => el.remove(), 4000);
 }

@@ -8,7 +8,7 @@ export function StatsBar({ stats }: Props) {
   const items = [
     { label: 'Tổng số từ', value: stats.total },
     { label: 'Mới tuần này', value: stats.newThisWeek },
-    { label: 'Cần ôn tập', value: stats.needsReview },
+    { label: 'Cần ôn tập', value: stats.dueForReview },
   ];
 
   return (

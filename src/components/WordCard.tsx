@@ -20,15 +20,20 @@ export function WordCard({ vocabulary, onClick, active }: Props) {
         <span className="font-display text-base font-semibold text-ink-900">
           {vocabulary.word}
         </span>
-        <span className="shrink-0 text-xs text-ink-700">
-          ×{vocabulary.encounterCount}
-        </span>
+        <span className="shrink-0 text-xs text-ink-600">×{vocabulary.encounterCount}</span>
       </div>
       {vocabulary.meaning ? (
-        <p className="mt-1 line-clamp-2 text-xs text-ink-700">{vocabulary.meaning}</p>
+        <p className="mt-0.5 line-clamp-1 text-xs text-ink-700">{vocabulary.meaning}</p>
+      ) : (
+        <p className="mt-0.5 text-xs italic text-ink-400">Chưa có nghĩa</p>
+      )}
+      {vocabulary.example ? (
+        <p className="mt-0.5 line-clamp-1 text-[11px] italic text-ink-500">
+          "{vocabulary.example}"
+        </p>
       ) : null}
-      <p className="mt-1 text-[11px] text-ink-700/70">
-        Gần nhất: {formatDate(vocabulary.lastSeenAt)}
+      <p className="mt-1 text-[11px] text-ink-500">
+        {formatDate(vocabulary.lastSeenAt)}
       </p>
     </button>
   );
