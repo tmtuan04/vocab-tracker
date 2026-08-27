@@ -26,10 +26,10 @@ async function getAll(): Promise<{ vocabularies: Vocabulary[]; encounters: Encou
   };
 }
 
-async function setAll(vocabularies: Vocabulary[], encounters: Encounter[]): Promise<void> {
+async function setAll(vocabularies: Vocabulary[], encounters: Encounter[], skipAutoSync = false): Promise<void> {
   await chrome.storage.local.set({ [KEYS.vocabularies]: vocabularies, [KEYS.encounters]: encounters });
   // Tự động đồng bộ lên Google Sheets (debounce 3s, im lặng nếu chưa kết nối)
-  scheduleAutoSync();
+  if (!skipAutoSync) scheduleAutoSync();
 }
 
 export async function listVocabularies(): Promise<Vocabulary[]> {
@@ -103,7 +103,7 @@ export async function saveSelection(payload: SelectionPayload): Promise<SaveResu
 
 export async function updateVocabulary(
   id: string,
-  patch: Partial<Pick<Vocabulary, 'meaning' | 'example' | 'note' | 'dictionary' | 'review'>>,
+  patch: Partial<Pick<Vocabulary, 'word' | 'meaning' | 'example' | 'note' | 'dictionary' | 'review'>>,
 ): Promise<Vocabulary | null> {
   const { vocabularies, encounters } = await getAll();
   const idx = vocabularies.findIndex((v) => v.id === id);
@@ -292,7 +292,7 @@ export async function importCSV(content: string): Promise<{ imported: number; up
 
 // ─── Shared merge logic ───────────────────────────────────────────────────────
 
-async function mergeRows(rows: Partial<SpreadsheetRow>[]): Promise<{ imported: number; updated: number }> {
+async function mergeRows(rows: Partial<SpreadsheetRow>[], skipAutoSync = false): Promise<{ imported: number; updated: number }> {
   const now = new Date().toISOString();
   const { vocabularies, encounters } = await getAll();
   const nextVocabs = [...vocabularies];
@@ -323,8 +323,13 @@ async function mergeRows(rows: Partial<SpreadsheetRow>[]): Promise<{ imported: n
       imported++;
     }
   }
-  await setAll(nextVocabs, encounters);
+  await setAll(nextVocabs, encounters, skipAutoSync);
   return { imported, updated };
+}
+
+/** Import rows từ pull (không trigger auto-sync để không ghi đè sheet gốc). */
+export async function importRowsFromPull(rows: Partial<SpreadsheetRow>[]): Promise<{ imported: number; updated: number }> {
+  return mergeRows(rows, true);
 }
 
 export async function clearAll(): Promise<void> { await setAll([], []); }

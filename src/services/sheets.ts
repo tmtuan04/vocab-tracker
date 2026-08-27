@@ -13,6 +13,7 @@ import type { Vocabulary } from '@/types/vocabulary';
 export type SheetsConfig = {
   spreadsheetId: string | null;
   spreadsheetTitle: string;
+  sheetTabName: string;
   lastSyncAt: string | null;
   userEmail: string | null;
 };
@@ -33,6 +34,7 @@ const CONFIG_KEY = 'sheetsConfig';
 const DEFAULT_CONFIG: SheetsConfig = {
   spreadsheetId: null,
   spreadsheetTitle: '',
+  sheetTabName: SHEET_NAME,
   lastSyncAt: null,
   userEmail: null,
 };
@@ -189,20 +191,28 @@ export async function createSpreadsheet(): Promise<{ id: string; title: string; 
   await setSheetsConfig({
     spreadsheetId: data.spreadsheetId,
     spreadsheetTitle: title,
+    sheetTabName: SHEET_NAME,
     lastSyncAt: null,
   });
 
   return { id: data.spreadsheetId, title, url: data.spreadsheetUrl };
 }
 
-/** Kết nối spreadsheet có sẵn bằng ID. */
+/** Kết nối spreadsheet có sẵn bằng ID. Tự detect tên tab đầu tiên. */
 export async function connectSpreadsheet(spreadsheetId: string): Promise<string> {
-  const res = await sheetsFetch(`${SHEETS_API}/${spreadsheetId}?fields=properties.title`);
-  const data = (await res.json()) as { properties: { title: string } };
+  const res = await sheetsFetch(`${SHEETS_API}/${spreadsheetId}?fields=properties.title,sheets.properties.title`);
+  const data = (await res.json()) as {
+    properties: { title: string };
+    sheets?: { properties: { title: string } }[];
+  };
+
+  // Lấy tên tab đầu tiên của spreadsheet
+  const firstTab = data.sheets?.[0]?.properties?.title || SHEET_NAME;
 
   await setSheetsConfig({
     spreadsheetId,
     spreadsheetTitle: data.properties.title,
+    sheetTabName: firstTab,
     lastSyncAt: null,
   });
 
@@ -237,6 +247,8 @@ export async function pushToSheets(
   spreadsheetId: string,
   vocabularies: Vocabulary[],
 ): Promise<number> {
+  const config = await getSheetsConfig();
+  const tabName = config.sheetTabName || SHEET_NAME;
   const rows = vocabularies
     .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime())
     .map(vocabToRow);
@@ -245,7 +257,7 @@ export async function pushToSheets(
 
   // Clear sheet rồi ghi lại
   await sheetsFetch(
-    `${SHEETS_API}/${spreadsheetId}/values/'${SHEET_NAME}'!A1:Z?valueInputOption=RAW`,
+    `${SHEETS_API}/${spreadsheetId}/values/'${tabName}'!A1:Z?valueInputOption=RAW`,
     {
       method: 'PUT',
       body: JSON.stringify({ values: allValues }),
@@ -270,9 +282,12 @@ interface PullRow {
 
 /**
  * Pull dữ liệu từ Sheet, trả về parsed rows để merge vào local.
+ * Hỗ trợ header tiếng Anh, tiếng Việt, hoặc fallback theo thứ tự cột.
  */
 export async function pullFromSheets(spreadsheetId: string): Promise<PullRow[]> {
-  const range = encodeURIComponent(`'${SHEET_NAME}'!A1:H`);
+  const config = await getSheetsConfig();
+  const tabName = config.sheetTabName || SHEET_NAME;
+  const range = encodeURIComponent(`'${tabName}'!A1:H`);
   const res = await sheetsFetch(
     `${SHEETS_API}/${spreadsheetId}/values/${range}?majorDimension=ROWS`,
   );
@@ -280,16 +295,40 @@ export async function pullFromSheets(spreadsheetId: string): Promise<PullRow[]> 
   const rows = data.values;
   if (!rows || rows.length < 2) return [];
 
-  const headers = rows[0]!.map(String);
+  const rawHeaders = rows[0]!.map((h) => String(h).trim().toLowerCase());
+
+  // Smart mapping: tìm index của từng field theo nhiều tên khác nhau
+  const findCol = (...names: string[]) =>
+    rawHeaders.findIndex((h) => names.some((n) => h.includes(n)));
+
+  let wordIdx = findCol('word', 'từ', 'vocabulary', 'english');
+  let meaningIdx = findCol('meaning', 'nghĩa', 'definition', 'vietnamese', 'tiếng việt');
+  let exampleIdx = findCol('example', 'ví dụ', 'sentence', 'câu');
+  let noteIdx = findCol('note', 'ghi chú', 'notes');
+  const encounterIdx = findCol('encounter', 'số lần', 'count');
+  const firstSeenIdx = findCol('first seen', 'ngày thêm', 'created');
+  const lastSeenIdx = findCol('last seen', 'ngày gặp', 'updated');
+
+  // Fallback: nếu không tìm thấy header, dùng thứ tự cột (col 0=word, 1=meaning, 2=example)
+  if (wordIdx < 0) wordIdx = 0;
+  if (meaningIdx < 0) meaningIdx = wordIdx + 1 < rawHeaders.length ? wordIdx + 1 : -1;
+  if (exampleIdx < 0) exampleIdx = wordIdx + 2 < rawHeaders.length ? wordIdx + 2 : -1;
+
   const result: PullRow[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i]!;
-    const obj: Record<string, string | number | boolean> = {};
-    headers.forEach((h, j) => { obj[h] = row[j] ?? ''; });
-    const word = String(obj['Word'] ?? '').trim();
+    const word = String(row[wordIdx] ?? '').trim();
     if (!word) continue;
-    result.push(obj as unknown as PullRow);
+    result.push({
+      Word: word,
+      Meaning: meaningIdx >= 0 ? String(row[meaningIdx] ?? '') : '',
+      Example: exampleIdx >= 0 ? String(row[exampleIdx] ?? '') : '',
+      Note: noteIdx >= 0 ? String(row[noteIdx] ?? '') : '',
+      'Encounter Count': encounterIdx >= 0 ? String(row[encounterIdx] ?? '') : undefined,
+      'First Seen': firstSeenIdx >= 0 ? String(row[firstSeenIdx] ?? '') : undefined,
+      'Last Seen': lastSeenIdx >= 0 ? String(row[lastSeenIdx] ?? '') : undefined,
+    });
   }
 
   await setSheetsConfig({ lastSyncAt: new Date().toISOString() });
