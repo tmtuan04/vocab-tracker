@@ -1,12 +1,13 @@
 /**
  * Google OAuth2 Configuration
  *
- * ⚠️ THAY CLIENT_ID bằng client_id thật từ Google Cloud Console.
+ * ⚠️ Đặt VITE_GOOGLE_CLIENT_ID trong file .env (xem .env.example).
  * Xem hướng dẫn tại tab "Hướng dẫn" trong extension.
  *
- * Nếu chưa có client_id, để chuỗi rỗng — extension sẽ hiện hướng dẫn setup.
+ * Nếu chưa có client_id, để trống — extension sẽ hiện hướng dẫn setup.
  */
-export const GOOGLE_CLIENT_ID = '758926257925-3kcgn8nr9b8ls9vlkvkl6jip99olb2qq.apps.googleusercontent.com';
+export const GOOGLE_CLIENT_ID =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',

@@ -802,7 +802,7 @@ function SettingsTab() {
             <div className="rounded-xl bg-amber-50/80 border border-amber-200/60 p-3 space-y-1.5">
               <p className="text-xs font-medium text-amber-800">⚠️ Chưa cấu hình OAuth</p>
               <p className="text-[11px] text-amber-700 leading-relaxed">
-                Thêm client_id vào <code className="rounded bg-amber-100/80 px-1 py-0.5 font-mono text-[10px]">src/config/google.ts</code>
+                Thêm <code className="rounded bg-amber-100/80 px-1 py-0.5 font-mono text-[10px]">VITE_GOOGLE_CLIENT_ID</code> vào file <code className="rounded bg-amber-100/80 px-1 py-0.5 font-mono text-[10px]">.env</code>
               </p>
               <p className="text-[10px] text-amber-600">Xem tab ❓ Hướng dẫn để biết chi tiết.</p>
             </div>
