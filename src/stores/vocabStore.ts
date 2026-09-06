@@ -7,7 +7,7 @@ export function useVocabularies(query = '') {
   const [stats, setStats] = useState<VocabularyStats>({
     total: 0,
     newThisWeek: 0,
-    needsReview: 0,
+    dueForReview: 0,
   });
   const [loading, setLoading] = useState(true);
 

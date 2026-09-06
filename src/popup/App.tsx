@@ -34,10 +34,10 @@ export default function App() {
     <div className="w-[360px] min-h-[420px] bg-[radial-gradient(circle_at_top_left,#e6f2eb,transparent_55%),linear-gradient(180deg,#f6f7f4,#eef1ea)] p-4">
       <header className="mb-3">
         <h1 className="font-display text-xl font-semibold text-ink-900">
-          My Vocabulary
+          Từ vựng của tôi
         </h1>
         <p className="text-xs text-ink-700">
-          Bôi đen từ → chuột phải → Save to My Vocabulary
+          Bôi đen từ → chuột phải → "Thêm vào từ vựng"
         </p>
       </header>
 
@@ -47,7 +47,7 @@ export default function App() {
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-700">
-            Recent vocabularies
+            Từ gần đây
           </h2>
           {loading ? (
             <p className="text-sm text-ink-700">Đang tải…</p>

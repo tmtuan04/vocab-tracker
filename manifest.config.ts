@@ -1,5 +1,10 @@
 import { defineManifest } from '@crxjs/vite-plugin';
+import { loadEnv } from 'vite';
 import packageJson from './package.json';
+import { GOOGLE_SCOPES } from './src/config/google';
+
+const env = loadEnv(process.env.MODE ?? 'development', process.cwd(), '');
+const GOOGLE_CLIENT_ID = env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 export default defineManifest({
   manifest_version: 3,
@@ -46,8 +51,18 @@ export default defineManifest({
     'activeTab',
     'scripting',
     'tabs',
+    'identity',
   ],
   host_permissions: ['<all_urls>', 'https://api.dictionaryapi.dev/*'],
+  // OAuth2: user đăng nhập bằng Google account của họ
+  ...(GOOGLE_CLIENT_ID
+    ? {
+        oauth2: {
+          client_id: GOOGLE_CLIENT_ID,
+          scopes: GOOGLE_SCOPES,
+        },
+      }
+    : {}),
   web_accessible_resources: [
     {
       resources: ['public/icons/icon16.png', 'public/icons/icon48.png', 'public/icons/icon128.png'],

@@ -19,8 +19,9 @@ export default {
         },
       },
       fontFamily: {
+        // Segoe UI hỗ trợ tiếng Việt; tránh Georgia/Palatino (thiếu dấu → vỡ chữ như "rô`i")
         sans: ['"Segoe UI"', 'Candara', 'Calibri', 'system-ui', 'sans-serif'],
-        display: ['Georgia', '"Palatino Linotype"', 'Palatino', 'serif'],
+        display: ['"Segoe UI"', 'Candara', 'Calibri', 'system-ui', 'sans-serif'],
       },
     },
   },

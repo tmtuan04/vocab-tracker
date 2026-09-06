@@ -8,7 +8,7 @@ function ensureContextMenu(): void {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: 'Save to My Vocabulary',
+      title: 'Thêm vào từ vựng',
       contexts: ['selection'],
     });
   });
@@ -17,33 +17,78 @@ function ensureContextMenu(): void {
 chrome.runtime.onInstalled.addListener(() => {
   ensureContextMenu();
   if (chrome.sidePanel?.setPanelBehavior) {
-    void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+    void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   }
 });
 
-// Re-register listeners every SW wake; recreate menu if missing after update
 ensureContextMenu();
 
+// Context menu: bôi đen → chuột phải → mở side panel với form nhập nghĩa
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID || !tab?.id) return;
-  void handleSaveFromTab(tab.id, tab.windowId, info.selectionText);
+
+  // ⚡ MỞ SIDE PANEL NGAY LẬP TỨC trong handler đồng bộ (giữ user gesture)
+  if (tab.windowId != null) {
+    void chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
+  }
+
+  // Sau đó async lấy selection context và lưu vào session
+  void (async () => {
+    const selection = await requestSelection(tab.id!, info.selectionText);
+    if (selection) {
+      await chrome.storage.session.set({ pendingNewWord: selection });
+    } else {
+      await notify(tab.id!, {
+        kind: 'error',
+        title: 'Không có từ',
+        message: 'Hãy bôi đen một từ rồi thử lại. (F5 trang nếu vừa mới cài extension)',
+      });
+    }
+  })();
 });
 
+// Phím tắt Alt+S: mở side panel với từ đang chọn
 chrome.commands.onCommand.addListener((command) => {
   if (command !== 'save-selection') return;
   void (async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    await handleSaveFromTab(tab.id, tab.windowId);
+    if (!tab?.id || tab.windowId == null) return;
+
+    // ⚡ Mở side panel ngay
+    await chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
+
+    const selection = await requestSelection(tab.id, undefined);
+    if (selection) {
+      await chrome.storage.session.set({ pendingNewWord: selection });
+    }
   })();
 });
 
 chrome.runtime.onMessage.addListener((message: MessageType, sender, sendResponse) => {
+  // Bubble click từ content script
+  if (message.type === 'OPEN_SIDEPANEL_FOR_NEW') {
+    const windowId = sender.tab?.windowId;
+
+    // ⚡ MỞ SIDE PANEL NGAY LẬP TỨC — TRƯỚC mọi await
+    // chrome.sidePanel.open() phải được gọi đồng bộ trong onMessage handler
+    // để Chrome còn giữ user gesture context từ content script click.
+    if (windowId != null) {
+      void chrome.sidePanel.open({ windowId }).catch(() => undefined);
+    }
+
+    // Sau đó mới async lưu data vào session
+    void (async () => {
+      await chrome.storage.session.set({ pendingNewWord: message.payload });
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
   if (message.type === 'SAVE_SELECTION') {
-    // Open side panel ASAP to preserve user-gesture when possible
-    const earlyWindowId = sender.tab?.windowId;
-    if (earlyWindowId != null) {
-      void chrome.sidePanel.open({ windowId: earlyWindowId }).catch(() => undefined);
+    const windowId = sender.tab?.windowId;
+    // ⚡ Mở side panel ngay
+    if (windowId != null) {
+      void chrome.sidePanel.open({ windowId }).catch(() => undefined);
     }
 
     void (async () => {
@@ -52,33 +97,8 @@ chrome.runtime.onMessage.addListener((message: MessageType, sender, sendResponse
         await broadcastUpdated();
         await chrome.storage.session.set({
           selectedVocabularyId: result.vocabulary.id,
+          pendingNewWord: null,
         });
-
-        const tabId = sender.tab?.id;
-        if (tabId != null) {
-          if (result.wasDebounced) {
-            await notify(tabId, {
-              kind: 'debounced',
-              title: '✓ Đã lưu',
-              message: `Bạn vừa lưu “${result.vocabulary.word}” gần đây.`,
-            });
-          } else if (result.isNew) {
-            await notify(tabId, {
-              kind: 'saved',
-              title: '✓ Đã lưu',
-              message: `“${result.vocabulary.word}” — lần đầu gặp.`,
-            });
-          } else {
-            await notify(tabId, {
-              kind: 'updated',
-              title: 'Bạn đã gặp từ này',
-              message: `${result.vocabulary.encounterCount} lần · Lần đầu: ${formatShort(
-                result.vocabulary.firstSeenAt,
-              )} · Gần nhất: ${formatShort(result.vocabulary.lastSeenAt)}`,
-            });
-          }
-        }
-
         sendResponse({ type: 'SAVE_RESULT', payload: result } satisfies MessageType);
       } catch (err) {
         const tabId = sender.tab?.id;
@@ -106,7 +126,10 @@ chrome.runtime.onMessage.addListener((message: MessageType, sender, sendResponse
     void (async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab?.windowId != null) {
-        await openSidePanel(tab.windowId, message.payload?.vocabularyId);
+        if (message.payload?.vocabularyId) {
+          await chrome.storage.session.set({ selectedVocabularyId: message.payload.vocabularyId });
+        }
+        await chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
       }
       sendResponse({ ok: true });
     })();
@@ -116,64 +139,11 @@ chrome.runtime.onMessage.addListener((message: MessageType, sender, sendResponse
   return false;
 });
 
-async function handleSaveFromTab(
-  tabId: number,
-  windowId?: number,
-  selectionText?: string,
-): Promise<void> {
-  try {
-    const selection = await requestSelection(tabId, selectionText);
-    if (!selection) {
-      await notify(tabId, {
-        kind: 'error',
-        title: 'Không có từ',
-        message: 'Hãy bôi đen một từ rồi thử lại. (F5 trang nếu vừa mới cài extension)',
-      });
-      return;
-    }
-
-    const result = await storage.saveSelection(selection);
-    await broadcastUpdated();
-
-    if (result.wasDebounced) {
-      await notify(tabId, {
-        kind: 'debounced',
-        title: '✓ Đã lưu',
-        message: `Bạn vừa lưu “${result.vocabulary.word}” gần đây.`,
-      });
-    } else if (result.isNew) {
-      await notify(tabId, {
-        kind: 'saved',
-        title: '✓ Đã lưu',
-        message: `“${result.vocabulary.word}” — lần đầu gặp.`,
-      });
-    } else {
-      await notify(tabId, {
-        kind: 'updated',
-        title: 'Bạn đã gặp từ này',
-        message: `${result.vocabulary.encounterCount} lần · Lần đầu: ${formatShort(
-          result.vocabulary.firstSeenAt,
-        )} · Gần nhất: ${formatShort(result.vocabulary.lastSeenAt)}`,
-      });
-    }
-
-    if (windowId != null) {
-      await openSidePanel(windowId, result.vocabulary.id);
-    }
-  } catch (err) {
-    await notify(tabId, {
-      kind: 'error',
-      title: 'Lỗi',
-      message: err instanceof Error ? err.message : 'Không thể lưu từ',
-    });
-  }
-}
-
 async function requestSelection(
   tabId: number,
   selectionText?: string,
 ): Promise<SelectionPayload | null> {
-  // Prefer content script (gets full sentence context)
+  // 1. Hỏi content script
   try {
     const response = (await chrome.tabs.sendMessage(tabId, {
       type: 'GET_SELECTION',
@@ -186,7 +156,7 @@ async function requestSelection(
     // Content script may not be injected yet
   }
 
-  // Fallback: script injection
+  // 2. Fallback: executeScript để lấy selection trực tiếp
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId },
@@ -215,7 +185,7 @@ async function requestSelection(
     // continue to selectionText fallback
   }
 
-  // Last resort: text from context menu (always available on selection menus)
+  // 3. Fallback: dùng selectionText từ context menu
   const word = selectionText?.trim();
   if (!word || word.length > 80) return null;
 
@@ -235,13 +205,7 @@ async function requestSelection(
       domain,
     };
   } catch {
-    return {
-      word,
-      sentence: word,
-      sourceUrl: '',
-      sourceTitle: '',
-      domain: '',
-    };
+    return { word, sentence: word, sourceUrl: '', sourceTitle: '', domain: '' };
   }
 }
 
@@ -252,13 +216,9 @@ async function notify(tabId: number, payload: ToastPayload): Promise<void> {
 async function showBadge(payload: ToastPayload): Promise<void> {
   try {
     const isError = payload.kind === 'error';
-    await chrome.action.setBadgeBackgroundColor({
-      color: isError ? '#7f1d1d' : '#2f6f4e',
-    });
+    await chrome.action.setBadgeBackgroundColor({ color: isError ? '#7f1d1d' : '#2f6f4e' });
     await chrome.action.setBadgeText({ text: isError ? '!' : '✓' });
-    await chrome.action.setTitle({
-      title: `${payload.title}: ${payload.message}`,
-    });
+    await chrome.action.setTitle({ title: `${payload.title}: ${payload.message}` });
     setTimeout(() => {
       void chrome.action.setBadgeText({ text: '' });
       void chrome.action.setTitle({ title: 'Vocabulary Tracker' });
@@ -269,13 +229,8 @@ async function showBadge(payload: ToastPayload): Promise<void> {
 }
 
 async function showToast(tabId: number, payload: ToastPayload): Promise<void> {
-  // Prefer content-script toast, but always also inject via scripting
-  // so feedback still appears when the content script is missing.
   try {
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'SHOW_TOAST',
-      payload,
-    } satisfies MessageType);
+    await chrome.tabs.sendMessage(tabId, { type: 'SHOW_TOAST', payload } satisfies MessageType);
   } catch {
     // ignore
   }
@@ -287,15 +242,11 @@ async function showToast(tabId: number, payload: ToastPayload): Promise<void> {
       args: [payload],
     });
   } catch {
-    // Restricted pages (chrome://, Web Store, etc.)
+    // Restricted pages
   }
 }
 
-function injectToast(payload: {
-  kind: string;
-  title: string;
-  message: string;
-}): void {
+function injectToast(payload: { kind: string; title: string; message: string }): void {
   const TOAST_ID = 'vocab-tracker-toast';
   document.getElementById(TOAST_ID)?.remove();
 
@@ -333,19 +284,7 @@ function injectToast(payload: {
 
   el.append(title, msg);
   (document.body ?? document.documentElement).appendChild(el);
-
   window.setTimeout(() => el.remove(), 4000);
-}
-
-async function openSidePanel(windowId: number, vocabularyId?: string): Promise<void> {
-  if (vocabularyId) {
-    await chrome.storage.session.set({ selectedVocabularyId: vocabularyId });
-  }
-  try {
-    await chrome.sidePanel.open({ windowId });
-  } catch {
-    // Side panel API may fail on some builds; ignore
-  }
 }
 
 async function broadcastUpdated(): Promise<void> {
@@ -353,17 +292,5 @@ async function broadcastUpdated(): Promise<void> {
     await chrome.runtime.sendMessage({ type: 'VOCAB_UPDATED' } satisfies MessageType);
   } catch {
     // No listeners
-  }
-}
-
-function formatShort(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat('vi-VN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    }).format(new Date(iso));
-  } catch {
-    return iso.slice(0, 10);
   }
 }
