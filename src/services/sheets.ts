@@ -1,9 +1,8 @@
-/**
- * Google Sheets Sync Service
- *
- * Sử dụng chrome.identity.getAuthToken() để authenticate user,
- * sau đó gọi Google Sheets API v4 qua REST.
- */
+// Không phải đồng bộ 2 chiều realtime -> backup/mirror local data to sheets
+// 3 điều kiện để đồng bộ, nếu không thỏa mãn -> bỏ qua
+// 1. Đã đăng nhập
+// 2. Có spreadsheetId
+// 3. Token hợp lệ
 
 import { GOOGLE_CLIENT_ID } from '@/config/google';
 import type { Vocabulary } from '@/types/vocabulary';

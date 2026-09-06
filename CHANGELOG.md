@@ -6,6 +6,26 @@
 
 ---
 ## Tính năng mới & Cập nhật
+> **Cập nhật**: 06/09/2026
+
+### 🎨 Giao diện
+- **Bỏ title "Vocabulary"** trên Side Panel — tab nav sát mép trên, gọn hơn
+- **Icon tab & UI** — thay emoji/icon nhựa bằng SVG stroke (book, target, settings, help, check, cloud, file…)
+- **Fix font tiếng Việt** — `font-display` đổi từ Georgia/Palatino sang Segoe UI (tránh vỡ dấu như "Hoàn thành rô\`i")
+- **Tab Ôn tập** — màn hình trống / hoàn thành dùng icon SVG thay 🎉✅
+
+### 🔊 Audio
+- **Nút nghe luôn hiện** cạnh từ ở tab Từ vựng (chi tiết + form thêm từ) và tab Ôn tập (mặt trước thẻ)
+- Không phụ thuộc phonetic/dictionary card; không có `audioUrl` thì fallback Web Speech API
+
+### 📖 Từ điển
+- **Không tra lại khi quay tab** — cache cả kết quả miss (`{ meanings: [] }`) sau lần gọi API đầu
+- **Giữ tab Từ vựng mounted** (`hidden` khi sang tab khác) — WordDetail không remount / không hiện lại "Đang tra từ điển…"
+
+### 🔧 Build & ổn định
+- Fix `Cannot find namespace 'JSX'` — dùng `ComponentType` từ React
+- Fix build crash `import.meta.env` undefined khi load `manifest.config` — optional chaining trên `VITE_GOOGLE_CLIENT_ID`
+
 > **Cập nhật**: 27/08/2026
 
 ### 🎨 Giao diện

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { EncounterList } from '@/components/EncounterList';
 import { SearchBox } from '@/components/SearchBox';
 import { WordCard } from '@/components/WordCard';
-import { fetchDictionary, getFirstDefinition } from '@/services/dictionary';
+import { fetchDictionary, getFirstDefinition, hasDictionaryContent, isDictionaryResolved, EMPTY_DICTIONARY } from '@/services/dictionary';
 import { GRADE_LABELS, previewInterval, getSRSConfig, setSRSConfig } from '@/services/srs';
 import type { ReviewGrade, SRSConfig } from '@/services/srs';
 import * as storage from '@/services/storage';
@@ -47,8 +47,8 @@ function AudioButton({ url, word }: { url?: string; word: string }) {
     speakWord(word, () => setPlaying(false));
   };
   return (
-    <button type="button" onClick={() => void play()} disabled={playing} title="Nghe phát âm"
-      className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50">
+    <button type="button" onClick={(e) => { e.stopPropagation(); void play(); }} disabled={playing} title="Nghe phát âm"
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50">
       {playing ? (
         <svg className="h-3 w-3 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
           <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
@@ -151,7 +151,7 @@ function AddWordForm({ pending, onSaved, onCancel }: {
     let cancelled = false;
     fetchDictionary(pending.word).then((entry) => {
       if (cancelled) return;
-      setDictEntry(entry);
+      setDictEntry(hasDictionaryContent(entry) ? entry : null);
       setDictLoading(false);
       if (entry && !didPrefill.current && !meaning) {
         const first = getFirstDefinition(entry);
@@ -172,7 +172,8 @@ function AddWordForm({ pending, onSaved, onCancel }: {
         word: wordText.trim() || pending.word, sentence: pending.sentence, sourceUrl: pending.sourceUrl,
         sourceTitle: pending.sourceTitle, domain: pending.domain,
         meaning: meaning.trim(), example: example.trim() || undefined,
-        dictionary: dictEntry ?? undefined,
+        // Luôn lưu kết quả tra (kể cả miss) để WordDetail không gọi API lại
+        dictionary: dictEntry ?? EMPTY_DICTIONARY,
       });
       await chrome.storage.session.set({ pendingNewWord: null, selectedVocabularyId: result.vocabulary.id });
       try { await chrome.runtime.sendMessage({ type: 'VOCAB_UPDATED' }); } catch { /* ignore */ }
@@ -189,6 +190,7 @@ function AddWordForm({ pending, onSaved, onCancel }: {
           <input type="text" value={wordText} onChange={(e) => setWordText(e.target.value)}
             className="font-display text-xl font-bold text-ink-900 bg-transparent border-b border-dashed border-ink-200 outline-none w-full focus:bg-ink-50 focus:border-accent focus:border-solid focus:rounded-lg focus:px-1.5 focus:py-0.5 transition-all"
             placeholder="Từ vựng" />
+          <AudioButton url={dictEntry?.audioUrl} word={wordText.trim() || pending.word} />
           <svg className="h-4 w-4 shrink-0 text-ink-400 group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
           </svg>
@@ -211,8 +213,8 @@ function AddWordForm({ pending, onSaved, onCancel }: {
           </svg>
           Đang tra từ điển…
         </div>
-      ) : dictEntry ? (
-        <DictionaryCard entry={dictEntry} word={pending.word} />
+      ) : hasDictionaryContent(dictEntry) ? (
+        <DictionaryCard entry={dictEntry!} word={pending.word} />
       ) : (
         <p className="text-xs text-ink-400 italic">Không tìm thấy trong từ điển.</p>
       )}
@@ -252,22 +254,32 @@ function WordDetail({ vocab, encounters, onUpdated, onDeleted }: {
   const [note, setNote] = useState(vocab.note ?? '');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [dictEntry, setDictEntry] = useState<DictionaryEntry | null>(vocab.dictionary ?? null);
-  const [dictLoading, setDictLoading] = useState(!vocab.dictionary);
+  const [dictEntry, setDictEntry] = useState<DictionaryEntry | null>(
+    hasDictionaryContent(vocab.dictionary) ? vocab.dictionary! : null,
+  );
+  const [dictLoading, setDictLoading] = useState(!isDictionaryResolved(vocab.dictionary));
 
   useEffect(() => {
     setWordText(vocab.word); setMeaning(vocab.meaning ?? ''); setExample(vocab.example ?? ''); setNote(vocab.note ?? '');
-    setStatus(null); setDictEntry(vocab.dictionary ?? null); setDictLoading(!vocab.dictionary);
+    setStatus(null);
+    setDictEntry(hasDictionaryContent(vocab.dictionary) ? vocab.dictionary! : null);
+    setDictLoading(!isDictionaryResolved(vocab.dictionary));
   }, [vocab.id, vocab.word, vocab.meaning, vocab.example, vocab.note, vocab.dictionary]);
 
   useEffect(() => {
-    if (vocab.dictionary) return;
+    if (isDictionaryResolved(vocab.dictionary)) return;
     let cancelled = false;
     fetchDictionary(vocab.word).then((entry) => {
       if (cancelled) return;
-      setDictEntry(entry); setDictLoading(false);
-      if (entry) void storage.updateVocabulary(vocab.id, { dictionary: entry });
-    }).catch(() => { if (!cancelled) setDictLoading(false); });
+      setDictEntry(hasDictionaryContent(entry) ? entry : null);
+      setDictLoading(false);
+      // Cache cả miss ({ meanings: [] }) để không tra lại
+      void storage.updateVocabulary(vocab.id, { dictionary: entry ?? EMPTY_DICTIONARY });
+    }).catch(() => {
+      if (cancelled) return;
+      setDictLoading(false);
+      void storage.updateVocabulary(vocab.id, { dictionary: EMPTY_DICTIONARY });
+    });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vocab.id]);
@@ -308,6 +320,10 @@ function WordDetail({ vocab, encounters, onUpdated, onDeleted }: {
           <input type="text" value={wordText} onChange={(e) => setWordText(e.target.value)}
             className="font-display text-2xl font-semibold text-ink-900 bg-transparent border-b border-dashed border-ink-200 outline-none w-full focus:bg-ink-50 focus:border-accent focus:border-solid focus:rounded-lg focus:px-1.5 focus:py-0.5 transition-all"
             placeholder="Từ vựng" />
+          <AudioButton
+            url={dictEntry?.audioUrl ?? vocab.dictionary?.audioUrl}
+            word={wordText.trim() || vocab.word}
+          />
           <svg className="h-5 w-5 shrink-0 text-ink-400 group-hover:text-accent transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
           </svg>
@@ -328,8 +344,8 @@ function WordDetail({ vocab, encounters, onUpdated, onDeleted }: {
           </svg>
           Đang tra từ điển…
         </div>
-      ) : dictEntry ? (
-        <DictionaryCard entry={dictEntry} word={vocab.word} defaultCollapsed />
+      ) : hasDictionaryContent(dictEntry) ? (
+        <DictionaryCard entry={dictEntry!} word={vocab.word} defaultCollapsed />
       ) : null}
 
       <div>
@@ -387,14 +403,22 @@ function StudyMode() {
 
   const current = dueWords[currentIdx];
 
-  // Load dict for current card
+  // Load dict for current card (chỉ gọi API nếu chưa từng tra)
   useEffect(() => {
     setDictEntry(null);
     if (!current) return;
-    if (current.dictionary) { setDictEntry(current.dictionary); return; }
+    if (isDictionaryResolved(current.dictionary)) {
+      setDictEntry(hasDictionaryContent(current.dictionary) ? current.dictionary! : null);
+      return;
+    }
     let cancelled = false;
-    fetchDictionary(current.word).then((e) => { if (!cancelled) setDictEntry(e); })
-      .catch(() => {/* ignore */});
+    fetchDictionary(current.word).then((e) => {
+      if (cancelled) return;
+      setDictEntry(hasDictionaryContent(e) ? e : null);
+      void storage.updateVocabulary(current.id, { dictionary: e ?? EMPTY_DICTIONARY });
+    }).catch(() => {
+      if (!cancelled) void storage.updateVocabulary(current.id, { dictionary: EMPTY_DICTIONARY });
+    });
     return () => { cancelled = true; };
   }, [current?.id]);
 
@@ -420,8 +444,13 @@ function StudyMode() {
   if (dueWords.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <div className="text-4xl mb-3">🎉</div>
-        <h3 className="font-display text-lg font-semibold text-ink-900">Hoàn thành rồi!</h3>
+        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent/10 text-accent">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <path d="M22 4 12 14.01l-3-3" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-ink-900">Hoàn thành rồi!</h3>
         <p className="mt-1 text-sm text-ink-600">Không có từ nào cần ôn hôm nay.</p>
         <p className="mt-1 text-xs text-ink-400">Thêm từ mới hoặc quay lại sau.</p>
       </div>
@@ -434,8 +463,13 @@ function StudyMode() {
       : 0;
     return (
       <div className="flex flex-col items-center py-10 text-center">
-        <div className="text-4xl mb-3">✅</div>
-        <h3 className="font-display text-xl font-semibold text-ink-900">Phiên ôn tập xong!</h3>
+        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent/10 text-accent">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <path d="M22 4 12 14.01l-3-3" />
+          </svg>
+        </div>
+        <h3 className="text-xl font-semibold text-ink-900">Phiên ôn tập xong!</h3>
         <div className="mt-4 grid grid-cols-2 gap-3 w-full max-w-xs">
           <div className="rounded-lg bg-accent-soft px-4 py-3">
             <div className="text-2xl font-bold text-accent-dark">{sessionStats.total}</div>
@@ -479,12 +513,12 @@ function StudyMode() {
               Từ mới
             </span>
           )}
-          <h2 className="font-display text-3xl font-bold text-ink-900">{current.word}</h2>
+          <div className="flex items-center justify-center gap-2">
+            <h2 className="font-display text-3xl font-bold text-ink-900">{current.word}</h2>
+            <AudioButton url={current.dictionary?.audioUrl ?? dictEntry?.audioUrl} word={current.word} />
+          </div>
           {current.dictionary?.phonetic && (
-            <div className="mt-1 flex items-center justify-center gap-2">
-              <span className="text-sm text-ink-500 font-mono">{current.dictionary.phonetic}</span>
-              <AudioButton url={current.dictionary.audioUrl} word={current.word} />
-            </div>
+            <p className="mt-1 text-sm text-ink-500 font-mono">{current.dictionary.phonetic}</p>
           )}
           {current.encounterCount > 1 && (
             <p className="mt-2 text-xs text-ink-400">Gặp {current.encounterCount} lần</p>
@@ -537,8 +571,8 @@ function StudyMode() {
             )}
 
             {/* Dictionary card */}
-            {dictEntry && (
-              <DictionaryCard entry={dictEntry} word={current.word} defaultCollapsed />
+            {hasDictionaryContent(dictEntry) && (
+              <DictionaryCard entry={dictEntry!} word={current.word} defaultCollapsed />
             )}
 
             {/* Grade buttons */}
@@ -785,7 +819,11 @@ function SettingsTab() {
       {/* ═══════════════════ SECTION 1: Google Sheets ═══════════════════ */}
       <section className="rounded-2xl border border-ink-150 bg-white overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
         <div className="flex items-center gap-2.5 border-b border-ink-100 bg-gradient-to-r from-blue-50/60 to-white px-4 py-3">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 text-base">☁️</span>
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+            </svg>
+          </span>
           <div className="flex-1 min-w-0">
             <h3 className="text-[13px] font-semibold text-ink-900">Google Sheets</h3>
             <p className="text-[10px] text-ink-500">Đồng bộ từ vựng lên cloud</p>
@@ -800,11 +838,11 @@ function SettingsTab() {
             <div className="flex items-center gap-2 text-xs text-ink-500 py-2"><Spinner /> Đang kiểm tra…</div>
           ) : !sheets.isConfigured() ? (
             <div className="rounded-xl bg-amber-50/80 border border-amber-200/60 p-3 space-y-1.5">
-              <p className="text-xs font-medium text-amber-800">⚠️ Chưa cấu hình OAuth</p>
+              <p className="text-xs font-medium text-amber-800">Chưa cấu hình OAuth</p>
               <p className="text-[11px] text-amber-700 leading-relaxed">
                 Thêm <code className="rounded bg-amber-100/80 px-1 py-0.5 font-mono text-[10px]">VITE_GOOGLE_CLIENT_ID</code> vào file <code className="rounded bg-amber-100/80 px-1 py-0.5 font-mono text-[10px]">.env</code>
               </p>
-              <p className="text-[10px] text-amber-600">Xem tab ❓ Hướng dẫn để biết chi tiết.</p>
+              <p className="text-[10px] text-amber-600">Xem tab Hướng dẫn để biết chi tiết.</p>
             </div>
           ) : !signedIn ? (
             <div className="space-y-3">
@@ -857,7 +895,12 @@ function SettingsTab() {
             <div className="space-y-3">
               {/* Sheet info card */}
               <div className="flex items-center gap-3 rounded-xl bg-gradient-to-r from-accent/5 to-transparent border border-accent/10 px-3 py-2.5">
-                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-lg">📊</span>
+                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h8" /><path d="M8 9h2" />
+                  </svg>
+                </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-ink-900 truncate">{sheetsConfig.spreadsheetTitle || 'Spreadsheet'}</p>
                   <a href={sheets.getSheetUrl(sheetsConfig.spreadsheetId)}
@@ -907,7 +950,12 @@ function SettingsTab() {
       {/* ═══════════════════ SECTION 2: Data Management ═══════════════════ */}
       <section className="rounded-2xl border border-ink-150 bg-white overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
         <div className="flex items-center gap-2.5 border-b border-ink-100 bg-gradient-to-r from-emerald-50/60 to-white px-4 py-3">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-base">📦</span>
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <path d="M3.3 7 12 12l8.7-5" /><path d="M12 22V12" />
+            </svg>
+          </span>
           <div>
             <h3 className="text-[13px] font-semibold text-ink-900">Dữ liệu</h3>
             <p className="text-[10px] text-ink-500">Xuất, nhập & backup từ vựng</p>
@@ -920,7 +968,9 @@ function SettingsTab() {
             <button type="button" onClick={() => toggleSection('excel')}
               className="flex w-full items-center justify-between text-left">
               <div className="flex items-center gap-2">
-                <span className="text-sm">📊</span>
+                <svg className="h-4 w-4 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h2" /><path d="M8 17h8" /><path d="M14 13h2" />
+                </svg>
                 <span className="text-xs font-medium text-ink-800">Excel (.xlsx)</span>
               </div>
               <svg className={`h-4 w-4 text-ink-400 transition-transform ${expandedSection === 'excel' ? 'rotate-180' : ''}`}
@@ -944,7 +994,9 @@ function SettingsTab() {
             <button type="button" onClick={() => toggleSection('csv')}
               className="flex w-full items-center justify-between text-left">
               <div className="flex items-center gap-2">
-                <span className="text-sm">📄</span>
+                <svg className="h-4 w-4 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M16 13H8" /><path d="M16 17H8" /><path d="M10 9H8" />
+                </svg>
                 <span className="text-xs font-medium text-ink-800">CSV</span>
               </div>
               <svg className={`h-4 w-4 text-ink-400 transition-transform ${expandedSection === 'csv' ? 'rotate-180' : ''}`}
@@ -970,7 +1022,9 @@ function SettingsTab() {
             <button type="button" onClick={() => toggleSection('json')}
               className="flex w-full items-center justify-between text-left">
               <div className="flex items-center gap-2">
-                <span className="text-sm">💾</span>
+                <svg className="h-4 w-4 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" />
+                </svg>
                 <span className="text-xs font-medium text-ink-800">Backup JSON</span>
                 <span className="rounded bg-ink-100 px-1 py-0.5 text-[9px] text-ink-500">Đầy đủ</span>
               </div>
@@ -1003,7 +1057,11 @@ function SettingsTab() {
       {srsConfig && (
         <section className="rounded-2xl border border-ink-150 bg-white overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
           <div className="flex items-center gap-2.5 border-b border-ink-100 bg-gradient-to-r from-violet-50/60 to-white px-4 py-3">
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100 text-base">🧠</span>
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100 text-violet-700">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" />
+              </svg>
+            </span>
             <div>
               <h3 className="text-[13px] font-semibold text-ink-900">Ôn tập</h3>
               <p className="text-[10px] text-ink-500">Cài đặt Spaced Repetition</p>
@@ -1128,7 +1186,7 @@ function GuideTab() {
         <div className="pl-7 space-y-1 text-xs text-ink-700">
           <p>Khi thêm từ tiếng Anh, extension tự động tra <strong>Free Dictionary API</strong> và hiển thị:</p>
           <ul className="list-disc pl-4 space-y-0.5">
-            <li><strong>Phiên âm</strong> (phonetic) + nút 🔊 nghe phát âm</li>
+            <li><strong>Phiên âm</strong> (phonetic) + nút nghe phát âm</li>
             <li><strong>Nghĩa</strong> theo từng loại từ (noun, verb, adjective…)</li>
             <li><strong>Ví dụ</strong> cho mỗi nghĩa</li>
             <li><strong>Từ đồng nghĩa / trái nghĩa</strong></li>
@@ -1164,7 +1222,7 @@ function GuideTab() {
             </div>
           </div>
           <p>Từ mới sẽ được ôn sau <strong>1 ngày</strong>, rồi <strong>6 ngày</strong>, rồi ngày càng dài ra nếu bạn nhớ tốt.</p>
-          <p className="text-ink-500">Badge đỏ trên tab "🎯 Ôn tập" hiển thị số từ cần ôn hôm nay.</p>
+          <p className="text-ink-500">Badge đỏ trên tab "Ôn tập" hiển thị số từ cần ôn hôm nay.</p>
         </div>
       </div>
 
@@ -1175,7 +1233,7 @@ function GuideTab() {
           Xuất / Nhập dữ liệu
         </h3>
         <div className="pl-7 space-y-1 text-xs text-ink-700">
-          <p>Vào tab <strong>⚙️ Cài đặt</strong> để:</p>
+          <p>Vào tab <strong>Cài đặt</strong> để:</p>
           <ul className="list-disc pl-4 space-y-0.5">
             <li><strong>Excel (.xlsx)</strong> — Xuất/nhập danh sách từ, mở được bằng Excel/Google Sheets</li>
             <li><strong>CSV</strong> — Xuất/nhập file CSV, tương thích mọi ứng dụng</li>
@@ -1203,7 +1261,12 @@ function GuideTab() {
 
       {/* FAQ */}
       <div>
-        <h3 className="font-semibold text-ink-900 mb-2">❓ Câu hỏi thường gặp</h3>
+        <h3 className="font-semibold text-ink-900 mb-2 flex items-center gap-1.5">
+          <svg className="h-4 w-4 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />
+          </svg>
+          Câu hỏi thường gặp
+        </h3>
         <div className="space-y-2">
           <div className="rounded-lg bg-white border border-ink-100 p-3">
             <p className="font-medium text-ink-900 text-xs">Click icon không hoạt động?</p>
@@ -1222,7 +1285,7 @@ function GuideTab() {
 
       {/* Phím tắt tổng hợp */}
       <div className="rounded-lg bg-ink-50 border border-ink-100 p-3">
-        <h3 className="font-semibold text-ink-900 mb-2 text-xs">⌨️ Phím tắt</h3>
+        <h3 className="font-semibold text-ink-900 mb-2 text-xs">Phím tắt</h3>
         <div className="space-y-1">
           <div className="flex justify-between text-xs">
             <span className="text-ink-700">Thêm từ đang bôi đen</span>
@@ -1238,23 +1301,63 @@ function GuideTab() {
   );
 }
 
+// ─── Icons (inline SVG) ───────────────────────────────────────────────────────
+
+function IconBook({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
+function IconTarget({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" />
+    </svg>
+  );
+}
+
+function IconSettings({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function IconHelp({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
 // ─── Tab Nav ──────────────────────────────────────────────────────────────────
 
 function TabNav({ tab, setTab, dueCount }: { tab: Tab; setTab: (t: Tab) => void; dueCount: number }) {
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: 'list', label: 'Từ vựng', icon: '📚' },
-    { id: 'study', label: 'Ôn tập', icon: '🎯' },
-    { id: 'settings', label: 'Cài đặt', icon: '⚙️' },
-    { id: 'guide', label: 'Hướng dẫn', icon: '❓' },
+  const tabs: { id: Tab; label: string; Icon: ComponentType<{ className?: string }> }[] = [
+    { id: 'list', label: 'Từ vựng', Icon: IconBook },
+    { id: 'study', label: 'Ôn tập', Icon: IconTarget },
+    { id: 'settings', label: 'Cài đặt', Icon: IconSettings },
+    { id: 'guide', label: 'Hướng dẫn', Icon: IconHelp },
   ];
   return (
     <div className="flex gap-1 mb-4 rounded-lg bg-ink-100 p-1">
       {tabs.map((t) => (
         <button key={t.id} type="button"
           onClick={() => setTab(t.id)}
-          className={`flex-1 flex items-center justify-center gap-1 rounded-md py-1.5 text-xs font-medium transition-colors relative
+          className={`flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-colors relative
             ${tab === t.id ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-600 hover:text-ink-800'}`}>
-          <span>{t.icon}</span>
+          <t.Icon className="shrink-0 opacity-80" />
           <span className="hidden min-[320px]:inline">{t.label}</span>
           {t.id === 'study' && dueCount > 0 && (
             <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-orange-500 text-[9px] font-bold text-white">
@@ -1329,16 +1432,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_0%_0%,#e6f2eb,transparent_45%),linear-gradient(180deg,#f6f7f4,#e8ebe3)] p-3">
-      {/* Header */}
-      <header className="mb-3">
-        <h1 className="font-display text-xl font-semibold text-ink-900">Vocabulary</h1>
-      </header>
-
-      {/* Tab Nav */}
       <TabNav tab={tab} setTab={setTab} dueCount={stats.dueForReview} />
 
-      {/* Tab: Danh sách */}
-      {tab === 'list' && (
+      {/* Giữ tab danh sách mounted để WordDetail không remount / tra lại từ điển */}
+      <div className={tab === 'list' ? undefined : 'hidden'}>
         <div>
           {pendingWord && (
             <AddWordForm
@@ -1395,15 +1492,10 @@ export default function App() {
             </div>
           )}
         </div>
-      )}
+      </div>
 
-      {/* Tab: Ôn tập */}
       {tab === 'study' && <StudyMode />}
-
-      {/* Tab: Cài đặt */}
       {tab === 'settings' && <SettingsTab />}
-
-      {/* Tab: Hướng dẫn */}
       {tab === 'guide' && <GuideTab />}
     </div>
   );

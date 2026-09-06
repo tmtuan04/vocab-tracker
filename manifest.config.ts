@@ -3,9 +3,8 @@ import { loadEnv } from 'vite';
 import packageJson from './package.json';
 import { GOOGLE_SCOPES } from './src/config/google';
 
-const GOOGLE_CLIENT_ID =
-  loadEnv(process.env.MODE ?? 'development', process.cwd(), '')
-    .VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
+const env = loadEnv(process.env.MODE ?? 'development', process.cwd(), '');
+const GOOGLE_CLIENT_ID = env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 export default defineManifest({
   manifest_version: 3,

@@ -7,7 +7,7 @@
  * Nếu chưa có client_id, để trống — extension sẽ hiện hướng dẫn setup.
  */
 export const GOOGLE_CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
+  import.meta.env?.VITE_GOOGLE_CLIENT_ID?.trim() ?? '';
 
 export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',

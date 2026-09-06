@@ -20,6 +20,18 @@ export type DictionaryEntry = {
   meanings: DictionaryMeaning[];
 };
 
+/** Marker lưu khi đã gọi API nhưng không có kết quả — tránh tra lại mỗi lần mở. */
+export const EMPTY_DICTIONARY: DictionaryEntry = { meanings: [] };
+
+export function hasDictionaryContent(entry: DictionaryEntry | null | undefined): boolean {
+  return !!entry && entry.meanings.length > 0;
+}
+
+/** true nếu đã từng tra (có data hoặc miss đã cache). */
+export function isDictionaryResolved(entry: DictionaryEntry | undefined): boolean {
+  return entry !== undefined;
+}
+
 // ─── Raw API types ────────────────────────────────────────────────────────────
 
 type FreeDictDefinition = {
