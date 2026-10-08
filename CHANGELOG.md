@@ -6,6 +6,20 @@
 
 ---
 ## Tính năng mới & Cập nhật
+> **Cập nhật**: 08/10/2026
+
+### 📚 Tra từ điển (Dictionary Pipeline) — *Cải tiến lớn*
+- **Cache 30 ngày** — lưu vào `chrome.storage.local`, LRU 5000 entries, trả về tức thì từ lần 2
+- **Wiktapi làm nguồn chính** — hỗ trợ **cụm từ** (phrases): "give up", "look forward to", "as well as"
+- **IPA đa dialec** — US, UK, AU, CA, v.v. từ Wikimedia
+- **Audio Wikimedia Commons** — MP3/OGG chất lượng cao, fallback Web Speech API
+- **Fallback DictionaryAPI** — tự động chuyển nếu Wiktapi fail (từ đơn)
+- **Timeout 3s** — không bị treo UI khi mạng chậm
+
+### 🔄 Google Sheets Sync — Pull (thay thế toàn bộ)
+- Nút **Pull (thay thế toàn bộ)** — xóa local, nạp toàn bộ từ sheet (không merge)
+- Hữu ích khi muốn reset về đúng dữ liệu sheet, hoặc sync từ máy khác
+
 > **Cập nhật**: 27/08/2026
 
 ### 🎨 Giao diện
