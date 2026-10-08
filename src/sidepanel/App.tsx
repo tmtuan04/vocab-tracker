@@ -745,6 +745,30 @@ function SettingsTab() {
     finally { setSheetsAction(null); }
   };
 
+  const onPullReplace = async () => {
+    if (!sheetsConfig?.spreadsheetId) return;
+    if (!confirm('Thay thế toàn bộ từ vựng hiện tại bằng dữ liệu từ sheet?\n\nDữ liệu cũ sẽ bị xóa hoàn toàn. Không thể hoàn tác.')) return;
+    setSheetsAction('Đang thay thế dữ liệu…');
+    try {
+      const rows = await sheets.pullFromSheets(sheetsConfig.spreadsheetId);
+      const count = await storage.replaceAllFromPull(
+        rows.map((r) => ({
+          Word: r.Word ?? '',
+          Meaning: r.Meaning ?? '',
+          Example: r.Example ?? '',
+          Note: r.Note ?? '',
+          'Encounter Count': r['Encounter Count'] != null ? Number(r['Encounter Count']) || undefined : undefined,
+          'First Seen': r['First Seen'] ?? undefined,
+          'Last Seen': r['Last Seen'] ?? undefined,
+        })),
+      );
+      const config = await sheets.getSheetsConfig();
+      setSheetsConfigState(config);
+      notify(`Đã thay thế: ${count} từ từ sheet.`);
+    } catch (e) { notify(String(e), false); }
+    finally { setSheetsAction(null); }
+  };
+
   const onDisconnect = async () => {
     if (!confirm('Ngắt kết nối sheet? (Dữ liệu trên sheet vẫn giữ nguyên)')) return;
     await sheets.setSheetsConfig({ spreadsheetId: null, spreadsheetTitle: '', lastSyncAt: null });
@@ -875,7 +899,7 @@ function SettingsTab() {
                 </p>
               )}
 
-              {/* Push / Pull */}
+              {/* Push / Pull / Thay thế */}
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" className="flex items-center justify-center gap-1.5 rounded-xl bg-accent py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-accent-dark transition-all active:scale-[0.97]"
                   onClick={() => void onPush()} disabled={!!sheetsAction}>
@@ -885,9 +909,14 @@ function SettingsTab() {
                 <button type="button" className="flex items-center justify-center gap-1.5 rounded-xl border border-ink-200 bg-white py-2.5 text-xs font-semibold text-ink-700 shadow-sm hover:bg-ink-50 transition-all active:scale-[0.97]"
                   onClick={() => void onPull()} disabled={!!sheetsAction}>
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4 8V6a2 2 0 012-2h12a2 2 0 012 2v2M12 20V8m0 12l-4-4m4 4l4-4"/></svg>
-                  Pull
+                  Pull (gộp)
                 </button>
               </div>
+              <button type="button" className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-orange-300 bg-orange-50 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-100 transition-all active:scale-[0.97]"
+                onClick={() => void onPullReplace()} disabled={!!sheetsAction}>
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Pull (thay thế toàn bộ)
+              </button>
 
               {sheetsAction && (
                 <div className="flex items-center gap-2 text-xs text-ink-500"><Spinner />{sheetsAction}</div>

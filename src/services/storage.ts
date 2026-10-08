@@ -327,9 +327,30 @@ async function mergeRows(rows: Partial<SpreadsheetRow>[], skipAutoSync = false):
   return { imported, updated };
 }
 
-/** Import rows từ pull (không trigger auto-sync để không ghi đè sheet gốc). */
+/** Import rows từ pull — merge (không trigger auto-sync để không ghi đè sheet gốc). */
 export async function importRowsFromPull(rows: Partial<SpreadsheetRow>[]): Promise<{ imported: number; updated: number }> {
   return mergeRows(rows, true);
+}
+
+/** Thay thế hoàn toàn dữ liệu local bằng dữ liệu từ sheet (không merge, không auto-sync). */
+export async function replaceAllFromPull(rows: Partial<SpreadsheetRow>[]): Promise<number> {
+  const now = new Date().toISOString();
+  const vocabs: Vocabulary[] = [];
+
+  for (const row of rows) {
+    const word = row.Word?.trim();
+    if (!word) continue;
+    vocabs.push({
+      id: uuid(), word, normalizedWord: normalizeWord(word),
+      meaning: row.Meaning ?? '', example: row.Example || undefined, note: row.Note || undefined,
+      encounterCount: Number(row['Encounter Count']) || 1,
+      firstSeenAt: row['First Seen'] ? new Date(row['First Seen']).toISOString() : now,
+      lastSeenAt: row['Last Seen'] ? new Date(row['Last Seen']).toISOString() : now,
+    });
+  }
+
+  await setAll(vocabs, [], true);
+  return vocabs.length;
 }
 
 export async function clearAll(): Promise<void> { await setAll([], []); }
