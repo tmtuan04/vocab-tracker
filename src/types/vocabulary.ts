@@ -37,6 +37,7 @@ export type SelectionPayload = {
   sourceUrl: string;
   sourceTitle: string;
   domain: string;
+  timestamp?: number;
 };
 
 export type SaveWordPayload = {

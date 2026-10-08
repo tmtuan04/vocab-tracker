@@ -20,6 +20,11 @@
 - Nút **Pull (thay thế toàn bộ)** — xóa local, nạp toàn bộ từ sheet (không merge)
 - Hữu ích khi muốn reset về đúng dữ liệu sheet, hoặc sync từ máy khác
 
+### 🐛 Bug Fixes
+- **Fix Sidebar không refresh khi tra từ mới liên tiếp** — reset sạch state, ô tiêu đề từ vựng, ô nghĩa và thông tin từ điển khi tra từ mới khi sidebar đang mở
+- **Gắn timestamp cho mỗi lượt tra** — đảm bảo session storage luôn phát hiện sự kiện và remount form thêm từ mới ngay lập tức
+- **Tự động nhận diện từ đã có trong kho** — hiển thị badge "Gặp lại (lần X)" và prefill nghĩa đã lưu nếu tra lại từ cũ
+
 > **Cập nhật**: 27/08/2026
 
 ### 🎨 Giao diện

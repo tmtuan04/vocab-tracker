@@ -36,7 +36,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   void (async () => {
     const selection = await requestSelection(tab.id!, info.selectionText);
     if (selection) {
-      await chrome.storage.session.set({ pendingNewWord: selection });
+      await chrome.storage.session.set({
+        pendingNewWord: { ...selection, timestamp: Date.now() },
+      });
     } else {
       await notify(tab.id!, {
         kind: 'error',
@@ -59,7 +61,9 @@ chrome.commands.onCommand.addListener((command) => {
 
     const selection = await requestSelection(tab.id, undefined);
     if (selection) {
-      await chrome.storage.session.set({ pendingNewWord: selection });
+      await chrome.storage.session.set({
+        pendingNewWord: { ...selection, timestamp: Date.now() },
+      });
     }
   })();
 });
@@ -78,7 +82,9 @@ chrome.runtime.onMessage.addListener((message: MessageType, sender, sendResponse
 
     // Sau đó mới async lưu data vào session
     void (async () => {
-      await chrome.storage.session.set({ pendingNewWord: message.payload });
+      await chrome.storage.session.set({
+        pendingNewWord: { ...message.payload, timestamp: Date.now() },
+      });
       sendResponse({ ok: true });
     })();
     return true;

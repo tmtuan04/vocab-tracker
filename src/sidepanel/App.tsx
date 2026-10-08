@@ -144,23 +144,56 @@ function AddWordForm({ pending, onSaved, onCancel }: {
   const [dictLoading, setDictLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [isExisting, setIsExisting] = useState(false);
+  const [existingCount, setExistingCount] = useState(0);
   const meaningRef = useRef<HTMLTextAreaElement>(null);
   const didPrefill = useRef(false);
 
+  // Reset và load toàn bộ dữ liệu khi từ mới được chọn
   useEffect(() => {
     let cancelled = false;
+    setWordText(pending.word);
+    setMeaning('');
+    setExample('');
+    setError('');
+    setDictEntry(null);
+    setDictLoading(true);
+    didPrefill.current = false;
+
+    // 1. Kiểm tra xem từ đã có trong kho từ vựng chưa
+    void storage.findByWord(pending.word).then((existing) => {
+      if (cancelled) return;
+      if (existing) {
+        setIsExisting(true);
+        setExistingCount(existing.encounterCount);
+        if (existing.meaning && !didPrefill.current) {
+          setMeaning(existing.meaning);
+          didPrefill.current = true;
+        }
+      } else {
+        setIsExisting(false);
+        setExistingCount(0);
+      }
+    });
+
+    // 2. Tra từ điển
     fetchDictionary(pending.word).then((entry) => {
       if (cancelled) return;
       setDictEntry(entry);
       setDictLoading(false);
-      if (entry && !didPrefill.current && !meaning) {
+      if (entry && !didPrefill.current) {
         const first = getFirstDefinition(entry);
-        if (first) { setMeaning(first); didPrefill.current = true; }
+        if (first) {
+          setMeaning(first);
+          didPrefill.current = true;
+        }
       }
-    }).catch(() => { if (!cancelled) setDictLoading(false); });
+    }).catch(() => {
+      if (!cancelled) setDictLoading(false);
+    });
+
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending.word]);
+  }, [pending.word, pending.sentence, pending.sourceUrl, pending.timestamp]);
 
   useEffect(() => { if (!dictLoading) meaningRef.current?.focus(); }, [dictLoading]);
 
@@ -193,7 +226,9 @@ function AddWordForm({ pending, onSaved, onCancel }: {
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
           </svg>
         </div>
-        <span className="text-xs text-ink-400 shrink-0 ml-2">Từ mới</span>
+        <span className="text-xs text-ink-400 shrink-0 ml-2">
+          {isExisting ? `Gặp lại (lần ${existingCount + 1})` : 'Từ mới'}
+        </span>
       </div>
 
       {pending.sentence && pending.sentence !== pending.word && (
@@ -1334,8 +1369,15 @@ export default function App() {
       if (area !== 'session') return;
       if ('pendingNewWord' in changes) {
         const pending = changes.pendingNewWord?.newValue as SelectionPayload | null;
-        if (pending) { setPendingWord(pending); setSelected(null); setSelectedId(null); setTab('list'); }
-        else { setPendingWord(null); }
+        if (pending) {
+          setPendingWord(pending);
+          setSelected(null);
+          setSelectedId(null);
+          setSaveToast(null);
+          setTab('list');
+        } else {
+          setPendingWord(null);
+        }
       }
       if ('selectedVocabularyId' in changes && !changes.pendingNewWord?.newValue) {
         const id = changes.selectedVocabularyId?.newValue as string | undefined;
@@ -1371,6 +1413,7 @@ export default function App() {
         <div>
           {pendingWord && (
             <AddWordForm
+              key={pendingWord.timestamp ?? `${pendingWord.word}_${pendingWord.sentence}`}
               pending={pendingWord}
               onSaved={() => {
                 setPendingWord(null);
@@ -1391,6 +1434,7 @@ export default function App() {
           )}
           {!pendingWord && selected && (
             <WordDetail
+              key={selected.id}
               vocab={selected}
               encounters={encounters}
               onUpdated={(v) => setSelected(v)}
